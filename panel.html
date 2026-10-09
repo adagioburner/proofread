@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<title>Proofread</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bar: #f5f5f7;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --border: #dcdce1;
+    --accent: #0a64d6;
+    --accent-text: #ffffff;
+    --ins: #0b6a2f;
+    --ins-bg: #d8f3e0;
+    --del: #b3261e;
+    --kept-bg: #fff0bf;
+    --hover: rgba(0, 0, 0, .06);
+    --error-bg: #fdecea;
+    --error-text: #8c1d18;
+    --code-bg: #ececf0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f1f22;
+      --bar: #29292d;
+      --text: #f2f2f5;
+      --muted: #a1a1a9;
+      --border: #3c3c42;
+      --accent: #4b93ff;
+      --ins: #7fe1a2;
+      --ins-bg: rgba(52, 199, 89, .20);
+      --del: #ff8f86;
+      --kept-bg: rgba(255, 204, 0, .20);
+      --hover: rgba(255, 255, 255, .07);
+      --error-bg: rgba(255, 69, 58, .14);
+      --error-text: #ffb4ab;
+      --code-bg: #2f2f34;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  [hidden] { display: none !important; }
+  .spacer { flex: 1; }
+
+  header, footer, #detail {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 16px;
+    background: var(--bar);
+  }
+  header { border-bottom: 1px solid var(--border); min-height: 46px; }
+  footer { border-top: 1px solid var(--border); }
+  #status { font-weight: 600; }
+  #counts { color: var(--muted); }
+
+  main { flex: 1; overflow: auto; padding: 18px 22px 24px; }
+  #text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  body.loading #text, body.error #text { color: var(--muted); }
+
+  /* A change: <span class="chg"><del>old</del><ins>new</ins></span> */
+  .chg {
+    margin: 0 2px;
+    border-radius: 4px;
+    cursor: pointer;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .chg:hover { background: var(--hover); }
+  .chg del, .chg ins { text-decoration: none; border-radius: 3px; padding: 1px 1px; }
+  .chg del + ins { margin-left: 3px; }
+  .chg.accepted del {
+    color: var(--del);
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+    opacity: .7;
+  }
+  .chg.accepted ins { background: var(--ins-bg); color: var(--ins); }
+  .chg.rejected del { background: var(--kept-bg); }
+  .chg.rejected ins {
+    color: var(--muted);
+    text-decoration: line-through;
+    opacity: .7;
+  }
+  .chg.current { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  #detail {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    border-top: 1px solid var(--border);
+    padding: 10px 16px 12px;
+  }
+  .detail-row { display: flex; align-items: center; gap: 8px; }
+  #position { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 92px; }
+  #change-line { font-size: 14px; overflow-wrap: anywhere; }
+  #change-line del { color: var(--del); text-decoration: line-through; }
+  #change-line ins { color: var(--ins); text-decoration: none; font-weight: 500; }
+  #change-line .arrow, #change-line .label { color: var(--muted); }
+  #reason { color: var(--muted); min-height: 1.4em; }
+
+  button {
+    font: inherit;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover { background: var(--hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 500; }
+  button.primary:hover { filter: brightness(1.08); }
+  button.small { padding: 2px 9px; font-size: 12px; }
+  button.icon { padding: 2px 9px; font-size: 15px; line-height: 1.2; }
+  button:disabled { opacity: .45; cursor: default; }
+  .toggle { display: inline-flex; }
+  .toggle button { border-radius: 0; }
+  .toggle button:first-child { border-radius: 6px 0 0 6px; }
+  .toggle button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
+  .toggle button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
+  kbd {
+    font: 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+    padding: 2px 5px;
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    color: var(--muted);
+    background: var(--bg);
+  }
+  button kbd { margin-left: 4px; background: transparent; color: inherit; opacity: .75; border-color: currentColor; }
+  #hints { color: var(--muted); font-size: 12px; }
+  #hints kbd { margin: 0 1px; }
+
+  #error {
+    margin-bottom: 18px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: var(--error-bg);
+    color: var(--error-text);
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  #error p { margin: 0; white-space: pre-wrap; }
+  #error-code {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--code-bg);
+    color: var(--text);
+    font: 12px/1.5 ui-monospace, Menlo, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .check { color: var(--ins); font-weight: 700; }
+</style>
+</head>
+<body class="loading">
+  <header>
+    <span id="spinner" class="spinner"></span>
+    <span id="status">Checking with Claude…</span>
+    <span id="counts"></span>
+    <span class="spacer"></span>
+    <button id="accept-all" class="small" tabindex="-1" hidden>Accept all</button>
+    <button id="reject-all" class="small" tabindex="-1" hidden>Reject all</button>
+  </header>
+
+  <main>
+    <div id="error" hidden>
+      <p id="error-message"></p>
+      <pre id="error-code" hidden></pre>
+    </div>
+    <div id="text"></div>
+  </main>
+
+  <section id="detail" hidden>
+    <div class="detail-row">
+      <button id="prev" class="icon" tabindex="-1" title="Previous change (←)">‹</button>
+      <button id="next" class="icon" tabindex="-1" title="Next change (→)">›</button>
+      <span id="position"></span>
+      <span class="spacer"></span>
+      <span class="toggle">
+        <button id="reject" class="small" tabindex="-1" title="Keep the original (R)">Reject<kbd>R</kbd></button>
+        <button id="accept" class="small" tabindex="-1" title="Use the suggestion (A)">Accept<kbd>A</kbd></button>
+      </span>
+    </div>
+    <div id="change-line"></div>
+    <div id="reason"></div>
+  </section>
+
+  <footer>
+    <span id="hints"></span>
+    <span class="spacer"></span>
+    <button id="cancel" tabindex="-1">Cancel</button>
+    <button id="copy" tabindex="-1" hidden title="Copy the result to the clipboard instead of inserting it">Copy</button>
+    <button id="retry" class="primary" tabindex="-1" hidden>Try again</button>
+    <button id="insert" class="primary" tabindex="-1" hidden>Insert</button>
+  </footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* =====================================================================
+   * Core: tokenizing, diffing and grouping. Pure functions, no DOM.
+   * The list of changes always comes from comparing the two texts here,
+   * never from what the model says it changed, so nothing can slip in
+   * unmarked.
+   * ===================================================================== */
+
+  // Words (with inner apostrophes, e.g. don't), runs of whitespace, or any
+  // other single character.
+  var TOKEN_RE = /[\p{L}\p{N}\p{M}]+(?:['’][\p{L}\p{N}\p{M}]+)*|\s+|[^\s]/gu;
+
+  function tokenize(s) {
+    return s.match(TOKEN_RE) || [];
+  }
+
+  function isSpace(s) {
+    return /^\s+$/.test(s);
+  }
+
+  // Myers diff on token arrays. Returns [[op, token], ...] with op '=', '-' or '+'.
+  function myers(a, b, maxD) {
+    var n = a.length, m = b.length, max = n + m;
+    var off = max + 1;
+    var v = new Int32Array(2 * max + 3);
+    var trace = [];
+    for (var d = 0; d <= max; d++) {
+      if (d > maxD) return null;
+      for (var k = -d; k <= d; k += 2) {
+        var x = (k === -d || (k !== d && v[off + k - 1] < v[off + k + 1])) ? v[off + k + 1] : v[off + k - 1] + 1;
+        var y = x - k;
+        while (x < n && y < m && a[x] === b[y]) { x++; y++; }
+        v[off + k] = x;
+        if (x >= n && y >= m) return backtrack(trace, a, b, d);
+      }
+      trace.push(v.slice(off - d, off + d + 1));
+    }
+    return null;
+  }
+
+  function backtrack(trace, a, b, D) {
+    var x = a.length, y = b.length, ops = [];
+    for (var d = D; d > 0; d--) {
+      var V = trace[d - 1]; // state after round d-1, index k + (d-1)
+      var k = x - y;
+      var down = (k === -d || (k !== d && V[k - 1 + d - 1] < V[k + 1 + d - 1]));
+      var prevK = down ? k + 1 : k - 1;
+      var prevX = V[prevK + d - 1];
+      var prevY = prevX - prevK;
+      var snakeStart = down ? prevX : prevX + 1;
+      while (x > snakeStart) { ops.push(['=', a[x - 1]]); x--; y--; }
+      if (down) ops.push(['+', b[prevY]]); else ops.push(['-', a[prevX]]);
+      x = prevX; y = prevY;
+    }
+    while (x > 0 && y > 0) { ops.push(['=', a[x - 1]]); x--; y--; }
+    return ops.reverse();
+  }
+
+  function diffTokens(a, b) {
+    var start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) start++;
+    var endA = a.length, endB = b.length;
+    while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+    var midA = a.slice(start, endA), midB = b.slice(start, endB);
+    var mid = myers(midA, midB, 4000);
+    if (!mid) { // Too different to diff finely: one big change.
+      mid = midA.map(function (t) { return ['-', t]; }).concat(midB.map(function (t) { return ['+', t]; }));
+    }
+    var ops = [];
+    for (var i = 0; i < start; i++) ops.push(['=', a[i]]);
+    ops = ops.concat(mid);
+    for (var j = endA; j < a.length; j++) ops.push(['=', a[j]]);
+    return ops;
+  }
+
+  // Two changes separated by nothing but spaces, or by a single word or
+  // punctuation mark on the same line, read better as one change.
+  function shouldMerge(gapTokens) {
+    var text = gapTokens.join('');
+    if (text.indexOf('\n') !== -1 || text.length > 24) return false;
+    var solid = gapTokens.filter(function (t) { return !isSpace(t); }).length;
+    return solid <= 1;
+  }
+
+  // Returns [{type: 'eq', text} | {type: 'chg', del, ins}] covering both texts.
+  function buildSegments(original, corrected) {
+    var ops = diffTokens(tokenize(original), tokenize(corrected));
+    var raw = [], cur = null;
+    ops.forEach(function (o) {
+      if (o[0] === '=') {
+        if (!cur || cur.type !== 'eq') { cur = { type: 'eq', tokens: [] }; raw.push(cur); }
+        cur.tokens.push(o[1]);
+      } else {
+        if (!cur || cur.type !== 'chg') { cur = { type: 'chg', del: [], ins: [] }; raw.push(cur); }
+        (o[0] === '-' ? cur.del : cur.ins).push(o[1]);
+      }
+    });
+
+    var merged = [];
+    for (var i = 0; i < raw.length; i++) {
+      var seg = raw[i];
+      var prev = merged[merged.length - 1];
+      var next = raw[i + 1];
+      if (seg.type === 'eq' && prev && prev.type === 'chg' && next && next.type === 'chg' && shouldMerge(seg.tokens)) {
+        prev.del = prev.del.concat(seg.tokens, next.del);
+        prev.ins = prev.ins.concat(seg.tokens, next.ins);
+        i++; // next was folded in
+        continue;
+      }
+      merged.push(seg);
+    }
+
+    var offset = 0;
+    return merged.map(function (s) {
+      if (s.type === 'eq') {
+        var text = s.tokens.join('');
+        offset += text.length;
+        return { type: 'eq', text: text };
+      }
+      var del = s.del.join(''), ins = s.ins.join('');
+      var out = { type: 'chg', del: del, ins: ins, at: offset, note: null };
+      offset += del.length;
+      return out;
+    });
+  }
+
+  function norm(s) {
+    return String(s || '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim();
+  }
+
+  // The part of a note that actually differs ("To me the way" -> "To me, the
+  // way" becomes "" -> ",").
+  function noteCore(note) {
+    var a = tokenize(String(note.original || '')), b = tokenize(String(note.replacement || ''));
+    var s = 0;
+    while (s < a.length && s < b.length && a[s] === b[s]) s++;
+    var ea = a.length, eb = b.length;
+    while (ea > s && eb > s && a[ea - 1] === b[eb - 1]) { ea--; eb--; }
+    return { del: norm(a.slice(s, ea).join('')), ins: norm(b.slice(s, eb).join('')) };
+  }
+
+  function sideScore(mine, theirs) {
+    if (!mine && !theirs) return 1;
+    if (!mine || !theirs) return mine ? -1 : 0;
+    if (mine === theirs) return 3;
+    if (theirs.indexOf(mine) !== -1 || mine.indexOf(theirs) !== -1) return 2;
+    return -1;
+  }
+
+  // Attaches the model's explanations to the changes found by the diff.
+  // Best effort: a change without a matching note simply has no reason.
+  function attachNotes(segments, notes, original) {
+    var list = (Array.isArray(notes) ? notes : []).filter(function (n) {
+      return n && typeof n === 'object';
+    }).map(function (n, i) {
+      var core = noteCore(n);
+      var orig = String(n.original || '');
+      return {
+        index: i,
+        reason: String(n.reason || '').trim(),
+        del: core.del,
+        ins: core.ins,
+        pos: orig ? original.indexOf(orig) : -1,
+        len: orig.length,
+        used: false,
+      };
+    });
+    var changes = segments.filter(function (s) { return s.type === 'chg'; });
+    changes.forEach(function (c, ci) {
+      var del = norm(c.del), ins = norm(c.ins);
+      var best = null, bestScore = 0;
+      list.forEach(function (n) {
+        var sd = sideScore(del, n.del), si = sideScore(ins, n.ins);
+        if (sd < 0 || si < 0 || sd + si < 3) return;
+        var score = sd + si;
+        if (n.pos >= 0 && c.at >= n.pos && c.at <= n.pos + n.len) score += 3;
+        if (!n.used) score += 1;
+        score -= Math.min(Math.abs(n.index - ci), 10) * 0.05;
+        if (score > bestScore) { bestScore = score; best = n; }
+      });
+      if (best && best.reason) {
+        c.note = best.reason;
+        best.used = true;
+      }
+    });
+    return segments;
+  }
+
+  function finalText(segments) {
+    return segments.map(function (s) {
+      return s.type === 'eq' ? s.text : (s.accepted ? s.ins : s.del);
+    }).join('');
+  }
+
+  var Core = {
+    tokenize: tokenize,
+    diffTokens: diffTokens,
+    buildSegments: buildSegments,
+    attachNotes: attachNotes,
+    finalText: finalText,
+  };
+  window.ProofreadCore = Core;
+
+  /* =====================================================================
+   * Panel UI
+   * ===================================================================== */
+
+  var $ = function (id) { return document.getElementById(id); };
+  var el = {
+    status: $('status'), counts: $('counts'), spinner: $('spinner'),
+    acceptAll: $('accept-all'), rejectAll: $('reject-all'),
+    error: $('error'), errorMessage: $('error-message'), errorCode: $('error-code'),
+    text: $('text'),
+    detail: $('detail'), prev: $('prev'), next: $('next'), position: $('position'),
+    accept: $('accept'), reject: $('reject'), changeLine: $('change-line'), reason: $('reason'),
+    hints: $('hints'), cancel: $('cancel'), copy: $('copy'), retry: $('retry'), insert: $('insert'),
+  };
+
+  var state = { phase: 'loading', original: '', segments: [], changes: [], current: 0, model: '' };
+
+  function post(message) {
+    try {
+      window.webkit.messageHandlers.proofread.postMessage(message);
+    } catch (err) {
+      console.log('Proofread: could not reach Hammerspoon', message);
+    }
+  }
+
+  // Makes whitespace-only edits visible.
+  function visible(s) {
+    if (!isSpace(s)) return s;
+    return s.replace(/ /g, '·').replace(/\t/g, '→').replace(/\n/g, '↵\n');
+  }
+
+  function quoteForLine(s) {
+    return visible(s).replace(/\n/g, ' ');
+  }
+
+  function update(payload) {
+    payload = payload || {};
+    state.original = typeof payload.original === 'string' ? payload.original : '';
+    state.model = payload.model || state.model;
+    state.segments = [];
+    state.changes = [];
+    state.current = 0;
+    state.error = null;
+
+    if (payload.state === 'result') {
+      var corrected = typeof payload.corrected === 'string' ? payload.corrected : state.original;
+      var segments = Core.buildSegments(state.original, corrected);
+      Core.attachNotes(segments, payload.changes, state.original);
+      var acceptByDefault = payload.acceptByDefault !== false;
+      state.segments = segments;
+      state.changes = segments.filter(function (s) { return s.type === 'chg'; });
+      state.changes.forEach(function (c, i) { c.index = i; c.accepted = acceptByDefault; });
+      state.phase = state.changes.length ? 'result' : 'clean';
+    } else if (payload.state === 'error') {
+      state.phase = 'error';
+      state.error = { message: payload.message || 'Something went wrong.', code: payload.code || '' };
+    } else {
+      state.phase = 'loading';
+    }
+    renderAll();
+  }
+
+  function setPhaseClass() {
+    document.body.className = state.phase;
+  }
+
+  function renderHeader() {
+    var p = state.phase;
+    el.spinner.hidden = p !== 'loading';
+    el.acceptAll.hidden = el.rejectAll.hidden = p !== 'result';
+    el.counts.textContent = '';
+    if (p === 'loading') {
+      el.status.textContent = 'Checking with Claude…';
+      el.counts.textContent = state.model;
+    } else if (p === 'result') {
+      var n = state.changes.length;
+      var accepted = state.changes.filter(function (c) { return c.accepted; }).length;
+      el.status.textContent = n + (n === 1 ? ' suggestion' : ' suggestions');
+      el.counts.textContent = '· ' + accepted + ' accepted';
+    } else if (p === 'clean') {
+      el.status.innerHTML = '<span class="check">✓</span> No changes needed';
+    } else {
+      el.status.textContent = 'Couldn’t proofread';
+    }
+  }
+
+  function renderText() {
+    el.text.textContent = '';
+    if (state.phase !== 'result') {
+      el.text.textContent = state.original;
+      return;
+    }
+    state.segments.forEach(function (seg) {
+      if (seg.type === 'eq') {
+        el.text.appendChild(document.createTextNode(seg.text));
+        return;
+      }
+      var span = document.createElement('span');
+      span.dataset.index = seg.index;
+      if (seg.del) {
+        var d = document.createElement('del');
+        d.textContent = visible(seg.del);
+        span.appendChild(d);
+      }
+      if (seg.ins) {
+        var i = document.createElement('ins');
+        i.textContent = visible(seg.ins);
+        span.appendChild(i);
+      }
+      span.addEventListener('click', function () {
+        select(seg.index);
+        setAccepted(seg.index, !seg.accepted);
+      });
+      seg.el = span;
+      el.text.appendChild(span);
+    });
+    refreshChips();
+  }
+
+  function refreshChips() {
+    state.changes.forEach(function (c) {
+      if (!c.el) return;
+      c.el.className = 'chg ' + (c.accepted ? 'accepted' : 'rejected') + (c.index === state.current ? ' current' : '');
+      c.el.title = (c.accepted ? 'Accepted' : 'Rejected') + ' — click to ' + (c.accepted ? 'reject' : 'accept') +
+        (c.note ? '\n' + c.note : '');
+    });
+  }
+
+  function renderDetail() {
+    var show = state.phase === 'result';
+    el.detail.hidden = !show;
+    if (!show) return;
+    var c = state.changes[state.current];
+    el.position.textContent = 'Change ' + (state.current + 1) + ' of ' + state.changes.length;
+    el.prev.disabled = state.current === 0;
+    el.next.disabled = state.current === state.changes.length - 1;
+    el.accept.setAttribute('aria-pressed', String(!!c.accepted));
+    el.reject.setAttribute('aria-pressed', String(!c.accepted));
+
+    el.changeLine.textContent = '';
+    function add(tag, text, cls) {
+      var node = document.createElement(tag);
+      node.textContent = text;
+      if (cls) node.className = cls;
+      el.changeLine.appendChild(node);
+    }
+    if (c.del && c.ins) {
+      add('del', quoteForLine(c.del));
+      add('span', '  →  ', 'arrow');
+      add('ins', quoteForLine(c.ins));
+    } else if (c.ins) {
+      add('span', 'Add  ', 'label');
+      add('ins', quoteForLine(c.ins));
+    } else {
+      add('span', 'Remove  ', 'label');
+      add('del', quoteForLine(c.del));
+    }
+    el.reason.textContent = c.note || '';
+  }
+
+  function renderFooter() {
+    var p = state.phase;
+    el.cancel.textContent = (p === 'loading' || p === 'result') ? 'Cancel' : 'Close';
+    el.cancel.className = p === 'clean' ? 'primary' : '';
+    el.copy.hidden = el.insert.hidden = p !== 'result';
+    el.retry.hidden = p !== 'error';
+
+    var hints = {
+      loading: '<kbd>esc</kbd> cancel',
+      result: '<kbd>←</kbd><kbd>→</kbd> move · <kbd>space</kbd> toggle · <kbd>↩</kbd> insert · <kbd>esc</kbd> cancel',
+      clean: '<kbd>↩</kbd> close',
+      error: '<kbd>↩</kbd> try again · <kbd>esc</kbd> close',
+    };
+    el.hints.innerHTML = hints[p] || '';
+  }
+
+  function renderError() {
+    var show = state.phase === 'error';
+    el.error.hidden = !show;
+    if (!show) return;
+    el.errorMessage.textContent = state.error.message;
+    el.errorCode.hidden = !state.error.code;
+    el.errorCode.textContent = state.error.code;
+  }
+
+  function renderAll() {
+    setPhaseClass();
+    renderHeader();
+    renderError();
+    renderText();
+    renderDetail();
+    renderFooter();
+    scrollToCurrent();
+  }
+
+  function scrollToCurrent() {
+    var c = state.changes[state.current];
+    if (c && c.el && c.el.scrollIntoView) c.el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function select(index) {
+    if (!state.changes.length) return;
+    state.current = Math.max(0, Math.min(state.changes.length - 1, index));
+    refreshChips();
+    renderDetail();
+    scrollToCurrent();
+  }
+
+  function setAccepted(index, accepted) {
+    var c = state.changes[index];
+    if (!c) return;
+    c.accepted = accepted;
+    refreshChips();
+    renderHeader();
+    renderDetail();
+  }
+
+  function setAll(accepted) {
+    state.changes.forEach(function (c) { c.accepted = accepted; });
+    refreshChips();
+    renderHeader();
+    renderDetail();
+  }
+
+  function decideAndAdvance(accepted) {
+    setAccepted(state.current, accepted);
+    if (state.current < state.changes.length - 1) select(state.current + 1);
+  }
+
+  function result() {
+    return Core.finalText(state.segments);
+  }
+
+  function insert() { if (state.phase === 'result') post({ action: 'insert', text: result() }); }
+  function copy() { if (state.phase === 'result') post({ action: 'copy', text: result() }); }
+  function cancel() { post({ action: 'cancel' }); }
+  function retry() { if (state.phase === 'error') post({ action: 'retry' }); }
+
+  function primary() {
+    if (state.phase === 'result') insert();
+    else if (state.phase === 'error') retry();
+    else if (state.phase === 'clean') cancel();
+  }
+
+  // Buttons never take keyboard focus, so Return and Space always mean the
+  // panel shortcuts below.
+  Array.prototype.forEach.call(document.querySelectorAll('button'), function (b) {
+    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
+  });
+  el.acceptAll.addEventListener('click', function () { setAll(true); });
+  el.rejectAll.addEventListener('click', function () { setAll(false); });
+  el.prev.addEventListener('click', function () { select(state.current - 1); });
+  el.next.addEventListener('click', function () { select(state.current + 1); });
+  el.accept.addEventListener('click', function () { decideAndAdvance(true); });
+  el.reject.addEventListener('click', function () { decideAndAdvance(false); });
+  el.cancel.addEventListener('click', cancel);
+  el.copy.addEventListener('click', copy);
+  el.retry.addEventListener('click', retry);
+  el.insert.addEventListener('click', insert);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.isComposing) return;
+    var code = e.code, key = e.key;
+    if (key === 'Escape' || (e.metaKey && code === 'KeyW')) { e.preventDefault(); cancel(); return; }
+    if (key === 'Enter') { e.preventDefault(); primary(); return; }
+    if (state.phase !== 'result' || e.metaKey || e.ctrlKey || e.altKey) return;
+    // e.code is the physical key, so A/R also work with a non-Latin layout.
+    if (key === 'ArrowRight' || key === 'ArrowDown' || (key === 'Tab' && !e.shiftKey)) {
+      e.preventDefault(); select(state.current + 1);
+    } else if (key === 'ArrowLeft' || key === 'ArrowUp' || (key === 'Tab' && e.shiftKey)) {
+      e.preventDefault(); select(state.current - 1);
+    } else if (code === 'Space') {
+      e.preventDefault(); setAccepted(state.current, !state.changes[state.current].accepted);
+    } else if (code === 'KeyA') {
+      e.preventDefault(); decideAndAdvance(true);
+    } else if (code === 'KeyR') {
+      e.preventDefault(); decideAndAdvance(false);
+    }
+  });
+
+  window.proofread = { update: update, result: result, state: state };
+  renderAll();
+  post({ action: 'ready' });
+})();
+</script>
+</body>
+</html>
