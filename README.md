@@ -114,10 +114,11 @@ spoon.Proofread.effort = "medium"            -- "low" (default, fastest), "mediu
 spoon.Proofread.acceptByDefault = false      -- start with every change rejected
 spoon.Proofread.promptFile = "~/Documents/my-proofread-prompt.md"
 spoon.Proofread.panelSize = { w = 900, h = 650 }
-spoon.Proofread.debug = true                 -- Inspect Element in the panel, extra logging
+spoon.Proofread.pasteDelay = 0.6             -- wait longer before pasting (default 0.3 s)
+spoon.Proofread.debug = true                 -- log each step to the Console; Inspect Element in the panel
 ```
 
-Other settings: `maxTokens` (default 16000), `keychainService` (the Keychain item name), and `clipboardRestoreDelay` (seconds to wait before restoring your clipboard, default 0.6).
+Other settings: `maxTokens` (default 16000), `keychainService` (the Keychain item name), and `clipboardRestoreDelay` (seconds to wait before restoring your clipboard, default 1).
 
 **Cost.** You pay Anthropic per use. A few paragraphs cost about a cent with Sonnet and a fraction of that with Haiku. You can set a monthly spend limit in the Claude Console.
 
@@ -136,6 +137,7 @@ Then type `hs.reload()` in the Hammerspoon Console. The clone is also your worki
 - **Nothing happens when I press the hotkey.** Open the Hammerspoon Console (hammer menu → Console, or open Hammerspoon again from Applications) and look for errors. Check that `hs.accessibilityState()` prints `true`, and that no other app uses the same hotkey.
 - **Accessibility is on, but `hs.accessibilityState()` says `false`.** Run `hs.relaunch()`. If that doesn't help, remove Hammerspoon from the Accessibility list in System Settings with **−**, add it again with **+**, and relaunch.
 - **"Select some text first," but text was selected.** The app didn't put the selection on the clipboard when sent ⌘C. Try copying manually to see whether ⌘C works there.
+- **Insert closes the panel but nothing changes** (seen in web apps like Google Colab). The page wasn't ready for the paste yet. Raise `pasteDelay`, for example to `0.6` or `1`. To see what happens, set `debug = true`, reload, try again, and look at the Proofread lines in the Hammerspoon Console.
 - **The result was pasted in the wrong place, or added instead of replacing.** The selection was lost while the panel was open, for example by clicking elsewhere in the app. Use **Copy** and paste it yourself in that case.
 - **Bold, links or other formatting disappeared.** Proofread works with plain text, so pasting replaces formatted text with plain text.
 - **The panel doesn't react to keys.** Click inside it once.

@@ -356,6 +356,52 @@ do
   check(not M.axPrompted, "no prompt when access is already granted")
 end
 
+---------------------------------------------------------------- 15. slow browser (Colab)
+do
+  print("\n== slow browser: page gets focus 0.4s after the app ==")
+  start("I dont know.", { setup = function() M.focusLag = 0.4 end })
+  openAndAnswer()
+  local before = M.clock
+  M.panelPost({ action = "insert", text = "I don't know." })
+  M.run(3)
+  check(M.lostPastes == 0 and #M.pasted == 1 and M.pasted[1].text == "I don't know.",
+        "paste waits until the page has keyboard focus")
+  local pasteKey
+  for _, k in ipairs(M.keys) do if k.code == 9 and k.down then pasteKey = k end end
+  check(pasteKey and pasteKey.at >= before + 0.4 + 0.3 - 1e-9, "and then waits pasteDelay before pressing Cmd-V")
+  check(M.pb.items["public.utf8-plain-text"] == "OLD CLIPBOARD", "clipboard restored afterwards")
+end
+
+do
+  print("\n== Cmd-V is pressed like a person would ==")
+  start("I dont know.")
+  openAndAnswer()
+  local first = #M.keys + 1
+  M.panelPost({ action = "insert", text = "I don't know." })
+  M.run(3)
+  local seq = {}
+  for i = first, #M.keys do
+    local k = M.keys[i]
+    if k.code == 55 or k.code == 9 then seq[#seq + 1] = k.code .. (k.down and "v" or "^") end
+  end
+  check(table.concat(seq, " ") == "55v 9v 9^ 55^", "Cmd down, V down, V up, Cmd up (" .. table.concat(seq, " ") .. ")")
+end
+
+do
+  print("\n== debug logging ==")
+  local spoon = start("I dont know.", { setup = function() end })
+  check(M.logLevel == "info", "quiet by default")
+  M.reset(); M.apps.editor.selection = "I dont know."; M.httpResponder = GOOD
+  spoon = dofile(REPO .. "/init.lua"); spoon.debug = true
+  spoon:proofreadSelection(); M.run(0.5)
+  M.panelPost({ action = "ready" }); M.run(1)
+  M.panelPost({ action = "insert", text = "I don't know." }); M.run(3)
+  local all = table.concat(M.logs, "\n")
+  check(M.logLevel == "debug" and all:find("Copied the selection: 12 bytes", 1, true)
+        and all:find("Switched back after", 1, true) and all:find("Pasting with Cmd-V into Editor", 1, true),
+        "debug = true logs each step")
+end
+
 print(("\n%d passed, %d failed"):format(passes, #failures))
 for _, f in ipairs(failures) do print("  FAILED: " .. f) end
 if #failures > 0 then error("tests failed") end

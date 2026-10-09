@@ -56,10 +56,16 @@ obj.acceptByDefault = true
 --- Size of the review panel.
 obj.panelSize = { w = 760, h = 560 }
 
+--- Proofread.pasteDelay
+--- Variable
+--- Seconds to wait after switching back to your app before pasting. Raise it
+--- if Insert sometimes does nothing in a slow app or web page.
+obj.pasteDelay = 0.3
+
 --- Proofread.clipboardRestoreDelay
 --- Variable
 --- Seconds to wait after pasting before your previous clipboard is restored.
-obj.clipboardRestoreDelay = 0.6
+obj.clipboardRestoreDelay = 1.0
 
 --- Proofread.debug
 --- Variable
@@ -191,12 +197,22 @@ end
 -- Keyboard and clipboard
 ---------------------------------------------------------------------------
 
+local KEYCODE_CMD = 55
+
+-- Presses Cmd+letter the way a person would: Cmd down, letter down and up,
+-- Cmd up. (Sending only the letter with a Cmd flag works in most apps but
+-- not reliably in browsers.)
 local function pressWithCmd(letter, fallbackCode)
   local code = hs.keycodes.map[letter]
   if type(code) ~= "number" then code = fallbackCode end
-  hs.eventtap.event.newKeyEvent({ "cmd" }, code, true):post()
+  local event = hs.eventtap.event
+  event.newKeyEvent(KEYCODE_CMD, true):post()
+  hs.timer.usleep(10000)
+  event.newKeyEvent({ "cmd" }, code, true):post()
   hs.timer.usleep(20000)
-  hs.eventtap.event.newKeyEvent({ "cmd" }, code, false):post()
+  event.newKeyEvent({ "cmd" }, code, false):post()
+  hs.timer.usleep(10000)
+  event.newKeyEvent(KEYCODE_CMD, false):post()
 end
 
 -- Waits until the hotkey's modifier keys are released, so they don't mix
@@ -261,8 +277,24 @@ local function isFrontmost(app)
   return front ~= nil and app ~= nil and front:pid() == app:pid()
 end
 
--- Brings the app (and window) the text came from back to the front.
+local function windowId(win)
+  local ok, id = pcall(function() return win:id() end)
+  if ok then return id end
+  return nil
+end
+
+local function describeFront()
+  local app = hs.application.frontmostApplication()
+  local win = hs.window.focusedWindow()
+  local title = win and select(2, pcall(function() return win:title() end)) or "no window"
+  return ("%s / %s"):format(app and app:name() or "no app", tostring(title))
+end
+
+-- Brings the app and window the text came from back to the front, and waits
+-- until that window really has focus (browsers report the app as active a
+-- moment before the page can take keystrokes).
 local function refocus(session, thenDo)
+  local started = hs.timer.secondsSinceEpoch()
   local focused = false
   if session.win then
     focused = pcall(function() session.win:focus() end)
@@ -274,22 +306,40 @@ local function refocus(session, thenDo)
     if thenDo then thenDo(false) end
     return
   end
-  poll(0.03, 1.5, function() return isFrontmost(session.app) end, function(ok)
+  local wantId = session.win and windowId(session.win)
+  poll(0.03, 1.5, function()
+    if not isFrontmost(session.app) then return false end
+    if not wantId then return true end
+    local current = hs.window.focusedWindow()
+    return current ~= nil and windowId(current) == wantId
+  end, function(windowReady)
+    local ok = windowReady or isFrontmost(session.app)
+    log.d(("Switched back after %.2fs (window focused: %s): %s"):format(
+      hs.timer.secondsSinceEpoch() - started, tostring(windowReady), describeFront()))
     if thenDo then thenDo(ok) end
   end)
 end
 
-local function pasteInto(session, text, restoreDelay)
+local function pasteInto(session, text, pasteDelay, restoreDelay)
   hs.pasteboard.setContents(text)
   session.expectedChangeCount = hs.pasteboard.changeCount()
   refocus(session, function(ok)
     if not ok then
+      log.w("Couldn't switch back to the original app; leaving the result on the clipboard")
       hs.alert.show("Proofread: couldn't switch back to the original app.\nThe corrected text is on your clipboard.", 4)
       return
     end
-    after(0.15, function()
+    after(pasteDelay, function()
+      log.d("Pasting with Cmd-V into " .. describeFront())
       pressWithCmd("v", KEYCODE_V)
-      after(restoreDelay, function() restoreIfUntouched(session) end)
+      after(restoreDelay, function()
+        if hs.pasteboard.changeCount() == session.expectedChangeCount then
+          log.d("Restoring the previous clipboard")
+        else
+          log.d("Clipboard changed since pasting; not restoring it")
+        end
+        restoreIfUntouched(session)
+      end)
     end)
   end)
 end
@@ -592,7 +642,7 @@ function obj:_finish(session, how, text)
   end
 
   if how == "insert" and type(text) == "string" and text ~= session.original then
-    pasteInto(session, text, self.clipboardRestoreDelay)
+    pasteInto(session, text, self.pasteDelay, self.clipboardRestoreDelay)
   elseif how == "copy" and type(text) == "string" then
     hs.pasteboard.setContents(text)
     refocus(session, function() hs.alert.show("Proofread: copied to the clipboard") end)
@@ -624,16 +674,20 @@ function obj:proofreadSelection()
     return
   end
 
+  log.setLogLevel(self.debug and "debug" or "info")
   local session = {
     app = hs.application.frontmostApplication(),
     win = hs.window.focusedWindow(),
     clipboard = snapshotClipboard(),
   }
   self._session = session
+  log.d("Hotkey pressed in " .. describeFront())
 
   afterModifiersReleased(function()
     copySelection(function(text, copied)
       if self._session ~= session then return end
+      log.d(("Copied the selection: %s"):format(
+        copied and (tostring(text and #text or 0) .. " bytes") or "clipboard didn't change"))
       session.expectedChangeCount = hs.pasteboard.changeCount()
       if type(text) ~= "string" or not text:find("%S") then
         self._session = nil

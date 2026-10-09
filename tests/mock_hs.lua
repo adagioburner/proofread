@@ -22,20 +22,37 @@ function M.reset()
   M.apps.editor = M.newApp("Editor", 100)
   M.apps.hammerspoon = M.newApp("Hammerspoon", 1)
   M.front = M.apps.editor
-  M.panelWindow = { focus = function(self) M.front = M.apps.hammerspoon; return self end }
+  M.focusedWin = M.front.window
+  M.focusLag = 0          -- seconds before a re-activated window gets keyboard focus
+  M.lostPastes = 0
+  M.panelWindow = {
+    id = function() return 999 end,
+    title = function() return "Proofread" end,
+    focus = function(self) M.front = M.apps.hammerspoon; M.focusedWin = self; return self end,
+  }
 end
 
 function M.newApp(name, pid)
   local app = { name_ = name, pid_ = pid, selection = nil }
   function app:pid() return self.pid_ end
   function app:name() return self.name_ end
-  function app:activate() M.front = self; return true end
+  -- Like a browser: the app is frontmost at once, the window (page) gets
+  -- keyboard focus M.focusLag seconds later.
+  local function bringForward(target)
+    M.front = target
+    M.focusedWin = nil
+    M.schedule(M.focusLag, function() if M.front == target then M.focusedWin = target.window end end)
+  end
+  function app:activate() bringForward(self); return true end
   app.window = {
     app = app,
-    focus = function(self) M.front = self.app; return self end,
+    id = function() return pid end,
+    title = function() return name .. " window" end,
+    focus = function(self) bringForward(self.app); return self end,
     screen = function() return M.screen end,
     application = function(self) return self.app end,
   }
+  if M.focusLag == nil then M.focusLag = 0 end
   return app
 end
 
@@ -71,8 +88,12 @@ end
 
 function M.onKey(mods, code, down)
   M.keys[#M.keys + 1] = { mods = table.concat(mods, "+"), code = code, down = down, at = M.clock, heldMods = M.modifiersHeld }
-  if not down then return end
+  if not down or code == 55 then return end
   local app = M.front
+  if mods[1] == "cmd" and code == 9 and M.focusedWin ~= app.window then
+    M.lostPastes = M.lostPastes + 1 -- the page didn't have keyboard focus yet
+    return
+  end
   if mods[1] == "cmd" and code == 8 then
     if app.selection and app.selection ~= "" then
       M.schedule(0.01, function() hs.pasteboard.setContents(app.selection) end)
@@ -111,6 +132,7 @@ hs = {
     for _, lvl in ipairs({ "e", "w", "i", "d", "f", "v" }) do
       l[lvl] = function(msg) M.logs[#M.logs + 1] = lvl .. ": " .. tostring(msg) end
     end
+    l.setLogLevel = function(level) M.logLevel = level end
     return l
   end },
   timer = {
@@ -134,6 +156,7 @@ hs = {
     end,
     event = {
       newKeyEvent = function(mods, code, down)
+        if type(mods) ~= "table" then mods, code, down = {}, mods, code end -- (key, isdown) form
         assert(type(code) == "number", "newKeyEvent called with a non-numeric key")
         return { post = function() M.onKey(mods, code, down) end }
       end,
@@ -141,7 +164,7 @@ hs = {
   },
   keycodes = { map = { c = 8, v = 9, p = 35 } },
   application = { frontmostApplication = function() return M.front end },
-  window = { focusedWindow = function() return M.front.window end },
+  window = { focusedWindow = function() return M.focusedWin end },
   screen = { mainScreen = function() return M.screen end },
   canvas = { windowLevels = { floating = 3 } },
   drawing = { windowLevels = { floating = 3 } },
@@ -150,7 +173,7 @@ hs = {
     if prompt then M.axPrompted = true end
     return M.axTrusted
   end,
-  focus = function() M.front = M.apps.hammerspoon end,
+  focus = function() M.front = M.apps.hammerspoon; M.focusedWin = nil end,
   execute = function(cmd)
     M.executed[#M.executed + 1] = cmd
     if cmd:find("find-generic-password", 1, true) and M.keychainKey then
