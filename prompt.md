@@ -11,12 +11,14 @@ Fix:
 - grammar: agreement, articles, prepositions, verb forms and tense
 - punctuation and capitalization, including comma splices and run-on sentences
 - wording that is grammatical but sounds unnatural or non-idiomatic to a native speaker
+- phrasing that is understandable but not how a native speaker would put it, even when it's grammatical ("make a photo" → "take a photo", "discuss about it" → "discuss it"). The author is a fluent non-native speaker who wants to sound natural.
 
 Leave alone:
 - the author's voice, tone, register and meaning; informal style is fine when it is deliberate
 - sentences that are already correct and natural: don't swap in synonyms or restructure for style
 - anything that quotes someone else (usually in quotation marks), and names, code, URLs and email addresses
 - greetings, sign-offs, line breaks, list markers and other formatting
+- don't fix spacing around dashes and the order of quotation marks and punctuation.
 
 Keep each change as small as possible: replace only the words that need to change, not the whole sentence.
 
