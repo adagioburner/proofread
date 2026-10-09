@@ -32,14 +32,18 @@ security add-generic-password -a "$USER" -s proofread-anthropic-api-key -w
 
 To replace the key later, run the same command with `-U` added.
 
-**4. Load the Spoon.** Click the Hammerspoon menu bar icon → *Open Config*, add these lines to `init.lua`, and save:
+**4. Load the Spoon.** Add two lines to Hammerspoon's config file, `~/.hammerspoon/init.lua`. From Terminal:
 
-```lua
+```sh
+cat >> ~/.hammerspoon/init.lua <<'EOF'
 hs.loadSpoon("Proofread")
 spoon.Proofread:bindHotkeys({ proofread = { { "ctrl", "alt" }, "p" } })
+EOF
 ```
 
-**5. Reload.** Click the Hammerspoon menu bar icon → *Reload Config*.
+(Or use *Open Config* in Hammerspoon's menu. Hammerspoon has no Dock icon or app menu: its menu is the hammer icon at the right end of the menu bar, which a MacBook's notch can hide.)
+
+**5. Reload.** In the Hammerspoon Console, type `hs.reload()` in the field at the bottom and press Return (or use *Reload Config* in the hammer menu). Then type `hs.accessibilityState()`: it should print `true`. If it prints `false` although Accessibility is turned on, run `hs.relaunch()`, since macOS often applies the permission only after a restart.
 
 Now select some text anywhere and press **⌃⌥P**.
 
@@ -60,7 +64,23 @@ Clicking a change toggles it too. **Accept all** / **Reject all** are at the top
 
 ## Changing the instructions
 
-Edit [`prompt.md`](prompt.md). It takes effect the next time you press the hotkey, with no reload needed. Commit your edits to keep a history of what you tried.
+Click **Edit prompt** at the top of the review panel. The instructions Claude gets, [`prompt.md`](prompt.md), open in an editor:
+
+| Button | Key | What it does |
+| --- | --- | --- |
+| **Save** | `⌘S` | writes your changes to `prompt.md` |
+| **Save & re-check** | `⌘↩` | saves, then proofreads the same text again, so you see the effect right away |
+| **Back** | `esc` | returns to the suggestions; your draft stays while the panel is open |
+| **Revert to last commit** | | puts back the version from your last git commit (then Save to keep it) |
+
+The line above the editor says whether you have unsaved changes, or saved changes you haven't committed yet. When you're happy with the prompt, commit and push it:
+
+```sh
+cd ~/.hammerspoon/Spoons/Proofread.spoon
+git commit -am "Improve the proofreading prompt" && git push
+```
+
+You can also edit `prompt.md` in any text editor. Changes apply the next time you proofread, with no reload needed. Text inside `<!-- -->` comments isn't sent to Claude.
 
 ## Settings
 
@@ -89,7 +109,8 @@ Then *Reload Config*. The clone is also your working copy: edit files there, rel
 
 ## Troubleshooting
 
-- **Nothing happens when I press the hotkey.** Open the Hammerspoon Console from its menu bar icon and look for errors. Check that Hammerspoon has Accessibility access, and that no other app uses the same hotkey.
+- **Nothing happens when I press the hotkey.** Open the Hammerspoon Console (hammer menu → Console, or open Hammerspoon again from Applications) and look for errors. Check that `hs.accessibilityState()` prints `true`, and that no other app uses the same hotkey.
+- **Accessibility is on, but `hs.accessibilityState()` says `false`.** Run `hs.relaunch()`. If that doesn't help, remove Hammerspoon from the Accessibility list in System Settings with **−**, add it again with **+**, and relaunch.
 - **"Select some text first," but text was selected.** The app didn't put the selection on the clipboard when sent ⌘C. Try copying manually to see whether ⌘C works there.
 - **The result was pasted in the wrong place, or added instead of replacing.** The selection was lost while the panel was open, for example by clicking elsewhere in the app. Use **Copy** and paste it yourself in that case.
 - **Bold, links or other formatting disappeared.** Proofread works with plain text, so pasting replaces formatted text with plain text.
@@ -107,6 +128,6 @@ Then *Reload Config*. The clone is also your working copy: edit files there, rel
 | File | What it is |
 | --- | --- |
 | `init.lua` | the Spoon: hotkey, clipboard, Claude API call, paste-back |
-| `panel.html` | the review panel: word diff, per-change accept/reject |
+| `panel.html` | the review panel: word diff, per-change accept/reject, prompt editor |
 | `prompt.md` | the instructions sent to Claude |
 | `tests/` | tests: `lua tests/test_flow.lua` runs the Spoon against a simulated Hammerspoon (needs Lua 5.4, e.g. `brew install lua`); `python3 tests/panel_test.py` tests the panel in a headless browser (needs Python Playwright) |

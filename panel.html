@@ -13,6 +13,7 @@
     --border: #dcdce1;
     --accent: #0a64d6;
     --accent-text: #ffffff;
+    --accent-soft: rgba(10, 100, 214, .18);
     --ins: #0b6a2f;
     --ins-bg: #d8f3e0;
     --del: #b3261e;
@@ -30,6 +31,7 @@
       --muted: #a1a1a9;
       --border: #3c3c42;
       --accent: #4b93ff;
+      --accent-soft: rgba(75, 147, 255, .25);
       --ins: #7fe1a2;
       --ins-bg: rgba(52, 199, 89, .20);
       --del: #ff8f86;
@@ -177,6 +179,38 @@
     overflow-wrap: anywhere;
   }
 
+  /* Prompt editor */
+  body.editing main, body.editing #detail { display: none !important; }
+  #prompt-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 16px 14px;
+  }
+  .prompt-bar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  #prompt-path { font: 12px ui-monospace, Menlo, monospace; }
+  #prompt-status.dirty { color: var(--accent); font-weight: 500; }
+  #prompt-status.error { color: var(--del); }
+  #prompt-text {
+    flex: 1;
+    width: 100%;
+    resize: none;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    font-variant-ligatures: none; /* show "-->" as typed, not as an arrow */
+    -webkit-user-select: text;
+    user-select: text;
+    outline: none;
+  }
+  #prompt-text:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #edit-prompt.dirty::after { content: " •"; color: var(--accent); }
+
   .spinner {
     width: 14px;
     height: 14px;
@@ -197,7 +231,17 @@
     <span class="spacer"></span>
     <button id="accept-all" class="small" tabindex="-1" hidden>Accept all</button>
     <button id="reject-all" class="small" tabindex="-1" hidden>Reject all</button>
+    <button id="edit-prompt" class="small" tabindex="-1" title="Edit the instructions sent to Claude">Edit prompt</button>
   </header>
+
+  <section id="prompt-view" hidden>
+    <div class="prompt-bar">
+      <span id="prompt-path"></span>
+      <span class="spacer"></span>
+      <span id="prompt-status"></span>
+    </div>
+    <textarea id="prompt-text" spellcheck="false" disabled></textarea>
+  </section>
 
   <main>
     <div id="error" hidden>
@@ -225,6 +269,10 @@
   <footer>
     <span id="hints"></span>
     <span class="spacer"></span>
+    <button id="revert-prompt" tabindex="-1" hidden title="Put back the version in your last git commit (then Save to keep it)">Revert to last commit</button>
+    <button id="back" tabindex="-1" hidden>Back</button>
+    <button id="save-prompt" tabindex="-1" hidden>Save</button>
+    <button id="recheck" class="primary" tabindex="-1" hidden title="Save the prompt and proofread the same text again">Save &amp; re-check</button>
     <button id="cancel" tabindex="-1">Cancel</button>
     <button id="copy" tabindex="-1" hidden title="Copy the result to the clipboard instead of inserting it">Copy</button>
     <button id="retry" class="primary" tabindex="-1" hidden>Try again</button>
@@ -450,9 +498,17 @@
     detail: $('detail'), prev: $('prev'), next: $('next'), position: $('position'),
     accept: $('accept'), reject: $('reject'), changeLine: $('change-line'), reason: $('reason'),
     hints: $('hints'), cancel: $('cancel'), copy: $('copy'), retry: $('retry'), insert: $('insert'),
+    editPrompt: $('edit-prompt'), promptView: $('prompt-view'), promptPath: $('prompt-path'),
+    promptStatus: $('prompt-status'), promptText: $('prompt-text'),
+    revertPrompt: $('revert-prompt'), back: $('back'), savePrompt: $('save-prompt'), recheck: $('recheck'),
   };
 
   var state = { phase: 'loading', original: '', segments: [], changes: [], current: 0, model: '' };
+
+  // The prompt editor. `saved` is what's in prompt.md, `committed` what's in
+  // the last git commit (null if unknown).
+  var editor = { open: false, requested: false, loaded: false, saving: false, justSaved: false,
+                 saved: '', committed: null, error: null };
 
   function post(message) {
     try {
@@ -500,15 +556,20 @@
   }
 
   function setPhaseClass() {
-    document.body.className = state.phase;
+    document.body.className = state.phase + (editor.open ? ' editing' : '');
   }
 
   function renderHeader() {
     var p = state.phase;
-    el.spinner.hidden = p !== 'loading';
-    el.acceptAll.hidden = el.rejectAll.hidden = p !== 'result';
+    el.spinner.hidden = p !== 'loading' || editor.open;
+    el.acceptAll.hidden = el.rejectAll.hidden = p !== 'result' || editor.open;
+    el.editPrompt.hidden = editor.open;
+    el.editPrompt.classList.toggle('dirty', promptDirty());
     el.counts.textContent = '';
-    if (p === 'loading') {
+    if (editor.open) {
+      el.status.textContent = 'Proofreading prompt';
+      el.counts.textContent = 'sent to Claude with every request';
+    } else if (p === 'loading') {
       el.status.textContent = 'Checking with Claude…';
       el.counts.textContent = state.model;
     } else if (p === 'result') {
@@ -598,19 +659,170 @@
   }
 
   function renderFooter() {
-    var p = state.phase;
+    var p = state.phase, editing = editor.open;
     el.cancel.textContent = (p === 'loading' || p === 'result') ? 'Cancel' : 'Close';
     el.cancel.className = p === 'clean' ? 'primary' : '';
-    el.copy.hidden = el.insert.hidden = p !== 'result';
-    el.retry.hidden = p !== 'error';
+    el.cancel.hidden = editing;
+    el.copy.hidden = el.insert.hidden = p !== 'result' || editing;
+    el.retry.hidden = p !== 'error' || editing;
+    el.back.hidden = el.savePrompt.hidden = el.recheck.hidden = !editing;
+    el.savePrompt.disabled = el.recheck.disabled = !editor.loaded || editor.saving;
+    renderPromptStatus();
 
     var hints = {
       loading: '<kbd>esc</kbd> cancel',
       result: '<kbd>←</kbd><kbd>→</kbd> move · <kbd>space</kbd> toggle · <kbd>↩</kbd> insert · <kbd>esc</kbd> cancel',
       clean: '<kbd>↩</kbd> close',
       error: '<kbd>↩</kbd> try again · <kbd>esc</kbd> close',
+      editing: '<kbd>⌘S</kbd> save · <kbd>⌘↩</kbd> save &amp; re-check · <kbd>esc</kbd> back',
     };
-    el.hints.innerHTML = hints[p] || '';
+    el.hints.innerHTML = hints[editing ? 'editing' : p] || '';
+  }
+
+  /* ---- Prompt editor ---- */
+
+  function sameText(a, b) {
+    return String(a == null ? '' : a).replace(/\s+$/, '') === String(b == null ? '' : b).replace(/\s+$/, '');
+  }
+
+  function promptDirty() {
+    return editor.loaded && !sameText(el.promptText.value, editor.saved);
+  }
+
+  function renderPromptStatus() {
+    var s = el.promptStatus, text = el.promptText.value;
+    var differsFromCommit = editor.loaded && editor.committed !== null && !sameText(text, editor.committed);
+    s.className = '';
+    if (editor.error) { s.textContent = editor.error; s.className = 'error'; }
+    else if (!editor.loaded) s.textContent = 'Loading…';
+    else if (editor.saving) s.textContent = 'Saving…';
+    else if (promptDirty()) { s.textContent = 'Unsaved changes'; s.className = 'dirty'; }
+    else if (differsFromCommit) s.textContent = editor.justSaved ? 'Saved · not committed yet' : 'Not committed yet';
+    else s.textContent = editor.justSaved ? 'Saved' : '';
+    el.revertPrompt.hidden = !(editor.open && differsFromCommit);
+  }
+
+  function renderEditor() {
+    el.promptView.hidden = !editor.open;
+  }
+
+  function openEditor() {
+    editor.open = true;
+    if (!editor.requested) {
+      editor.requested = true;
+      post({ action: 'getPrompt' });
+    }
+    renderAll();
+    el.promptText.focus();
+  }
+
+  function closeEditor() {
+    editor.open = false;
+    renderAll();
+  }
+
+  // From Hammerspoon: the prompt file's contents.
+  function showPrompt(p) {
+    p = p || {};
+    editor.loaded = true;
+    editor.error = p.error || null;
+    editor.saved = typeof p.text === 'string' ? p.text : '';
+    editor.committed = typeof p.committed === 'string' ? p.committed : null;
+    el.promptText.value = editor.saved;
+    el.promptText.disabled = false;
+    el.promptPath.textContent = p.path || '';
+    renderAll();
+    if (editor.open) {
+      el.promptText.focus();
+      el.promptText.setSelectionRange(0, 0);
+      el.promptText.scrollTop = 0;
+    }
+  }
+
+  function savePrompt(recheck) {
+    if (!editor.loaded || editor.saving) return;
+    editor.saving = true;
+    editor.error = null;
+    renderFooter();
+    post({ action: 'savePrompt', text: el.promptText.value, recheck: !!recheck });
+  }
+
+  // From Hammerspoon: the save finished.
+  function promptSaved(r) {
+    editor.saving = false;
+    if (!r || !r.ok) {
+      editor.error = (r && r.error) || 'Couldn’t save the prompt.';
+      renderFooter();
+      return;
+    }
+    editor.error = null;
+    editor.saved = r.text;
+    editor.committed = typeof r.committed === 'string' ? r.committed : null;
+    editor.justSaved = true;
+    if (r.recheck) editor.open = false; // the new result is on its way
+    renderAll();
+  }
+
+  function revertPrompt() {
+    if (editor.committed === null) return;
+    el.promptText.value = editor.committed;
+    editor.justSaved = false;
+    renderAll();
+    el.promptText.focus();
+  }
+
+  function insertIntoPrompt(text) {
+    var ta = el.promptText;
+    ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // From Hammerspoon: clipboard text for a paste the panel couldn't do itself.
+  function pasteFromHammerspoon(p) {
+    if (editor.open && p && typeof p.text === 'string') insertIntoPrompt(p.text);
+  }
+
+  // Cmd-A/C/X/V/Z in the editor. Normally macOS handles these; if it turns
+  // out it doesn't inside Hammerspoon's panel, do them here instead (the
+  // clipboard goes through Hammerspoon).
+  var nativeWorks = {};
+  function clipboardShortcut(e) {
+    var ta = el.promptText;
+    if (e.code === 'KeyA') { e.preventDefault(); ta.select(); return; }
+    var kind = { KeyC: 'copy', KeyX: 'cut', KeyV: 'paste', KeyZ: 'undo' }[e.code];
+    if (!kind) return;
+    var redo = e.shiftKey;
+    if (nativeWorks[kind] === true) return;
+    if (nativeWorks[kind] === false) { e.preventDefault(); clipboardFallback(kind, redo); return; }
+    // First time: give macOS a moment to handle it and see whether it did.
+    var happened = false;
+    var eventName = kind === 'undo' ? 'beforeinput' : kind;
+    var listener = function (ev) {
+      if (kind !== 'undo' || /^history/.test(ev.inputType || '')) happened = true;
+    };
+    document.addEventListener(eventName, listener, true);
+    setTimeout(function () {
+      document.removeEventListener(eventName, listener, true);
+      nativeWorks[kind] = happened;
+      if (!happened) clipboardFallback(kind, redo);
+    }, 400);
+  }
+
+  function clipboardFallback(kind, redo) {
+    var ta = el.promptText;
+    var selected = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if (kind === 'copy' && selected) post({ action: 'writeClipboard', text: selected });
+    else if (kind === 'cut' && selected) { post({ action: 'writeClipboard', text: selected }); insertIntoPrompt(''); }
+    else if (kind === 'paste') post({ action: 'readClipboard' });
+    else if (kind === 'undo') document.execCommand(redo ? 'redo' : 'undo');
+  }
+
+  function editorKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); closeEditor(); return; }
+    if (e.metaKey && e.key === 'Enter') { e.preventDefault(); savePrompt(true); return; }
+    if (e.metaKey && e.code === 'KeyS') { e.preventDefault(); savePrompt(false); return; }
+    if (e.metaKey && !e.ctrlKey && !e.altKey && document.activeElement === el.promptText) clipboardShortcut(e);
+    // Everything else is ordinary typing.
   }
 
   function renderError() {
@@ -628,8 +840,9 @@
     renderError();
     renderText();
     renderDetail();
+    renderEditor();
     renderFooter();
-    scrollToCurrent();
+    if (!editor.open) scrollToCurrent();
   }
 
   function scrollToCurrent() {
@@ -696,9 +909,20 @@
   el.copy.addEventListener('click', copy);
   el.retry.addEventListener('click', retry);
   el.insert.addEventListener('click', insert);
+  el.editPrompt.addEventListener('click', openEditor);
+  el.back.addEventListener('click', closeEditor);
+  el.savePrompt.addEventListener('click', function () { savePrompt(false); });
+  el.recheck.addEventListener('click', function () { savePrompt(true); });
+  el.revertPrompt.addEventListener('click', revertPrompt);
+  el.promptText.addEventListener('input', function () {
+    editor.justSaved = false;
+    renderPromptStatus();
+    el.editPrompt.classList.toggle('dirty', promptDirty());
+  });
 
   document.addEventListener('keydown', function (e) {
     if (e.isComposing) return;
+    if (editor.open) { editorKey(e); return; }
     var code = e.code, key = e.key;
     if (key === 'Escape' || (e.metaKey && code === 'KeyW')) { e.preventDefault(); cancel(); return; }
     if (key === 'Enter') { e.preventDefault(); primary(); return; }
@@ -717,7 +941,15 @@
     }
   });
 
-  window.proofread = { update: update, result: result, state: state };
+  window.proofread = {
+    update: update,
+    showPrompt: showPrompt,
+    promptSaved: promptSaved,
+    paste: pasteFromHammerspoon,
+    result: result,
+    state: state,
+    editor: editor,
+  };
   renderAll();
   post({ action: 'ready' });
 })();

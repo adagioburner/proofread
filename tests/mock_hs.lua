@@ -87,13 +87,16 @@ function M.panelPost(body)
   local wv = M.webview()
   wv.uc.cb({ body = body, name = "proofread" })
 end
-function M.lastPayload()
+-- The payload of the most recent window.proofread.<fn>(...) call (default: update).
+function M.lastCall(fn)
   local wv = M.webview()
-  local js = wv.js[#wv.js]
-  if not js then return nil end
-  local inner = js:match("^window%.proofread && window%.proofread%.update%((.*)%)$")
-  return json.decode(inner)
+  for i = #wv.js, 1, -1 do
+    local name, inner = wv.js[i]:match("^window%.proofread && window%.proofread%.([%w_]+)%((.*)%)$")
+    if name == (fn or "update") then return json.decode(inner) end
+  end
+  return nil
 end
+function M.lastPayload() return M.lastCall("update") end
 function M.json() return json end
 
 hs = {
@@ -148,6 +151,12 @@ hs = {
     M.executed[#M.executed + 1] = cmd
     if cmd:find("find-generic-password", 1, true) and M.keychainKey then
       return M.keychainKey .. "\n", true, "exit", 0
+    end
+    if cmd:find("/usr/bin/git", 1, true) then -- real git, for prompt history
+      local p = io.popen(cmd)
+      local out = p:read("a")
+      local ok = p:close()
+      return out, ok, "exit", ok and 0 or 1
     end
     return "", nil, "exit", 44
   end,

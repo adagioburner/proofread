@@ -134,6 +134,22 @@ local function readFile(path)
   return content
 end
 
+local function writeFile(path, content)
+  local f, err = io.open(path, "w")
+  if not f then return nil, err end
+  local ok, writeErr = f:write(content)
+  f:close()
+  if not ok then return nil, writeErr end
+  return true
+end
+
+-- /Users/me/x -> ~/x, for showing paths in the panel.
+local function displayPath(path)
+  local home = os.getenv("HOME")
+  if home and path:sub(1, #home + 1) == home .. "/" then return "~" .. path:sub(#home + 1) end
+  return path
+end
+
 local function shellQuote(s)
   local escaped = s:gsub("'", "'\\''")
   return "'" .. escaped .. "'"
@@ -216,17 +232,27 @@ local function restoreClipboard(snapshot)
   end
 end
 
--- Sends Cmd-C to the frontmost app and returns the copied text, or nil if
--- the clipboard didn't change (usually: nothing was selected).
+-- Puts the user's clipboard back, but only if nothing has changed it since
+-- we last wrote to it: if they copied something themselves while the panel
+-- was open, that wins.
+local function restoreIfUntouched(session)
+  if hs.pasteboard.changeCount() == session.expectedChangeCount then
+    restoreClipboard(session.clipboard)
+  end
+end
+
+-- Sends Cmd-C to the frontmost app and calls done(text, copied). text is nil
+-- and copied is false if the clipboard didn't change (usually: nothing was
+-- selected).
 local function copySelection(done)
   local before = hs.pasteboard.changeCount()
   pressWithCmd("c", KEYCODE_C)
   poll(0.03, 1.0, function()
     return hs.pasteboard.changeCount() ~= before
   end, function(changed)
-    if not changed then return done(nil) end
+    if not changed then return done(nil, false) end
     -- Give the app a moment to finish writing to the clipboard.
-    after(0.05, function() done(hs.pasteboard.getContents()) end)
+    after(0.05, function() done(hs.pasteboard.getContents(), true) end)
   end)
 end
 
@@ -255,6 +281,7 @@ end
 
 local function pasteInto(session, text, restoreDelay)
   hs.pasteboard.setContents(text)
+  session.expectedChangeCount = hs.pasteboard.changeCount()
   refocus(session, function(ok)
     if not ok then
       hs.alert.show("Proofread: couldn't switch back to the original app.\nThe corrected text is on your clipboard.", 4)
@@ -262,7 +289,7 @@ local function pasteInto(session, text, restoreDelay)
     end
     after(0.15, function()
       pressWithCmd("v", KEYCODE_V)
-      after(restoreDelay, function() restoreClipboard(session.clipboard) end)
+      after(restoreDelay, function() restoreIfUntouched(session) end)
     end)
   end)
 end
@@ -279,13 +306,65 @@ function obj:_apiKey()
   return nil
 end
 
+---------------------------------------------------------------------------
+-- The prompt file
+---------------------------------------------------------------------------
+
+function obj:_promptPath()
+  return expandHome(self.promptFile or (spoonPath .. "prompt.md"))
+end
+
+-- The text Claude gets: the prompt file without its <!-- comments -->.
 function obj:_systemPrompt()
-  local path = expandHome(self.promptFile or (spoonPath .. "prompt.md"))
+  local path = self:_promptPath()
   local content = readFile(path)
-  if not content then return nil, "Couldn't read the prompt file:\n" .. path end
+  if not content then return nil, "Couldn't read the prompt file:\n" .. displayPath(path) end
   content = trim(content:gsub("<!%-%-.-%-%->", ""))
-  if content == "" then return nil, "The prompt file is empty:\n" .. path end
+  if content == "" then return nil, "The prompt file is empty:\n" .. displayPath(path) end
   return content
+end
+
+-- prompt.md as of the last git commit, or nil if that isn't available (a
+-- custom promptFile, or the Spoon isn't a git checkout).
+function obj:_committedPrompt()
+  if self.promptFile then return nil end
+  local output, ok = hs.execute("/usr/bin/git -C " .. shellQuote(spoonPath) .. " show HEAD:prompt.md 2>/dev/null")
+  if ok and type(output) == "string" then return output end
+  return nil
+end
+
+function obj:_sendPrompt(session)
+  local path = self:_promptPath()
+  local text = readFile(path)
+  self:_call(session, "showPrompt", {
+    text = text or "",
+    path = displayPath(path),
+    committed = self:_committedPrompt(),
+    error = (not text) and ("Couldn't read " .. displayPath(path)) or nil,
+  })
+end
+
+function obj:_savePrompt(session, text, recheck)
+  if type(text) ~= "string" then return end
+  if text:sub(-1) ~= "\n" then text = text .. "\n" end
+  local path = self:_promptPath()
+  local ok, err = writeFile(path, text)
+  if not ok then
+    return self:_call(session, "promptSaved", {
+      ok = false,
+      error = "Couldn't save " .. displayPath(path) .. ": " .. tostring(err),
+    })
+  end
+  self:_call(session, "promptSaved", {
+    ok = true,
+    text = text,
+    committed = self:_committedPrompt(),
+    recheck = recheck and true or false,
+  })
+  if recheck then
+    self:_send(session, { state = "loading", original = session.original })
+    self:_requestCorrections(session)
+  end
 end
 
 function obj:_requestBody(system, text)
@@ -395,17 +474,22 @@ end
 -- Review panel
 ---------------------------------------------------------------------------
 
+-- Calls window.proofread.<fn>(payload) in the panel.
+function obj:_call(session, fn, payload)
+  if not (session.ready and session.webview) then return end
+  local ok, json = pcall(hs.json.encode, payload)
+  if not ok then
+    log.e("Couldn't encode data for the panel: " .. tostring(json))
+    return
+  end
+  session.webview:evaluateJavaScript("window.proofread && window.proofread." .. fn .. "(" .. json .. ")")
+end
+
 -- Sends the panel its current state (or remembers it until the panel is ready).
 function obj:_send(session, payload)
   payload.model = self.model
   session.payload = payload
-  if not (session.ready and session.webview) then return end
-  local ok, json = pcall(hs.json.encode, payload)
-  if not ok then
-    log.e("Couldn't encode panel state: " .. tostring(json))
-    return
-  end
-  session.webview:evaluateJavaScript("window.proofread && window.proofread.update(" .. json .. ")")
+  self:_call(session, "update", payload)
 end
 
 function obj:_focusPanel(session)
@@ -479,6 +563,15 @@ function obj:_onPanelMessage(session, body)
   elseif action == "retry" then
     self:_send(session, { state = "loading", original = session.original })
     self:_requestCorrections(session)
+  elseif action == "getPrompt" then
+    self:_sendPrompt(session)
+  elseif action == "savePrompt" then
+    self:_savePrompt(session, body.text, body.recheck)
+  elseif action == "readClipboard" then
+    -- For the prompt editor, in case Cmd-V doesn't reach it on its own.
+    self:_call(session, "paste", { text = hs.pasteboard.getContents() or "" })
+  elseif action == "writeClipboard" then
+    if type(body.text) == "string" then hs.pasteboard.setContents(body.text) end
   end
 end
 
@@ -504,7 +597,7 @@ function obj:_finish(session, how, text)
     hs.pasteboard.setContents(text)
     refocus(session, function() hs.alert.show("Proofread: copied to the clipboard") end)
   else
-    restoreClipboard(session.clipboard)
+    restoreIfUntouched(session)
     refocus(session)
   end
 end
@@ -539,11 +632,12 @@ function obj:proofreadSelection()
   self._session = session
 
   afterModifiersReleased(function()
-    copySelection(function(text)
+    copySelection(function(text, copied)
       if self._session ~= session then return end
+      session.expectedChangeCount = hs.pasteboard.changeCount()
       if type(text) ~= "string" or not text:find("%S") then
         self._session = nil
-        restoreClipboard(session.clipboard)
+        if copied then restoreClipboard(session.clipboard) end
         hs.alert.show("Proofread: select some text first")
         return
       end

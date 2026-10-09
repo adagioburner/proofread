@@ -273,6 +273,79 @@ do
   os.remove(path)
 end
 
+---------------------------------------------------------------- 14. prompt editor
+local function readAll(path) local f = io.open(path); local c = f:read("a"); f:close(); return c end
+local function writeAll(path, c) local f = io.open(path, "w"); f:write(c); f:close() end
+
+do
+  print("\n== prompt editor ==")
+  local path = os.tmpname()
+  writeAll(path, "<!-- note -->\nOld prompt.\n")
+  local spoon = start("I dont know.", { setup = function() end })
+  spoon.promptFile = path            -- never touch the repo's prompt.md in tests
+  openAndAnswer()
+
+  M.panelPost({ action = "getPrompt" })
+  local p = M.lastCall("showPrompt")
+  check(p and p.text == "<!-- note -->\nOld prompt.\n" and p.committed == nil and p.error == nil,
+        "getPrompt sends the file's text (no git history for a custom promptFile)")
+
+  M.panelPost({ action = "savePrompt", text = "<!-- note -->\nNew prompt.", recheck = false })
+  check(readAll(path) == "<!-- note -->\nNew prompt.\n", "savePrompt writes the file (with a final newline)")
+  local saved = M.lastCall("promptSaved")
+  check(saved.ok == true and saved.recheck == false and saved.text == "<!-- note -->\nNew prompt.\n", "panel told the save worked")
+  check(#M.requests == 1, "plain save doesn't re-run")
+
+  M.panelPost({ action = "savePrompt", text = "Newer prompt.\n", recheck = true })
+  check(M.lastCall("promptSaved").recheck == true, "save & re-check acknowledged")
+  check(M.lastPayload().state == "loading", "re-check shows loading")
+  check(#M.requests == 2 and json.decode(M.requests[2].body).system == "Newer prompt.", "re-check uses the new prompt")
+  M.run(1)
+  check(M.lastPayload().state == "result", "re-check result delivered")
+
+  spoon.promptFile = "/nonexistent-dir/prompt.md"
+  M.panelPost({ action = "savePrompt", text = "x", recheck = true })
+  local failed = M.lastCall("promptSaved")
+  check(failed.ok == false and failed.error:find("Couldn't save", 1, true), "unwritable file -> error, no re-run")
+  check(#M.requests == 2, "failed save doesn't re-run")
+  os.remove(path)
+end
+
+do
+  print("\n== prompt history from git ==")
+  local spoon = start("I dont know.")
+  openAndAnswer()
+  local committed = spoon:_committedPrompt()
+  check(type(committed) == "string" and committed:find("careful copy editor", 1, true),
+        "committed prompt.md read with git show HEAD:prompt.md")
+  M.panelPost({ action = "getPrompt" })
+  local p = M.lastCall("showPrompt")
+  check(p.text == readAll(REPO .. "/prompt.md") and p.committed == committed, "getPrompt includes the committed version")
+  check(p.path:sub(-23) == "/Proofread.spoon/prompt.md" or p.path:sub(-9) == "prompt.md", "path shown")
+end
+
+do
+  print("\n== editor clipboard bridge ==")
+  start("I dont know.")
+  openAndAnswer()
+  M.panelPost({ action = "readClipboard" })
+  check(M.lastCall("paste").text == "I dont know.", "readClipboard returns the clipboard text")
+  M.panelPost({ action = "writeClipboard", text = "copied in the editor" })
+  M.panelPost({ action = "cancel" })
+  M.run(2)
+  check(M.pb.items["public.utf8-plain-text"] == "copied in the editor", "text copied in the editor survives closing the panel")
+end
+
+do
+  print("\n== user copies something while the panel is open ==")
+  start("I dont know.")
+  openAndAnswer()
+  hs.pasteboard.setContents("copied from another app")
+  M.panelPost({ action = "cancel" })
+  M.run(2)
+  check(M.pb.items["public.utf8-plain-text"] == "copied from another app", "their new clipboard isn't overwritten")
+end
+
 print(("\n%d passed, %d failed"):format(passes, #failures))
 for _, f in ipairs(failures) do print("  FAILED: " .. f) end
 if #failures > 0 then error("tests failed") end
