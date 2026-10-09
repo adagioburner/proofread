@@ -14,6 +14,7 @@ function M.reset()
   M.pb = { items = { ["public.utf8-plain-text"] = "OLD CLIPBOARD", ["public.rtf"] = "{\\rtf old}" }, count = 5 }
   M.modifiersHeld = false
   M.axTrusted = true
+  M.axPrompted = false
   M.keychainKey = "sk-ant-test-key"
   M.httpDelay = 0.5
   M.httpResponder = nil
@@ -145,7 +146,10 @@ hs = {
   canvas = { windowLevels = { floating = 3 } },
   drawing = { windowLevels = { floating = 3 } },
   alert = { show = function(msg) M.alerts[#M.alerts + 1] = msg end },
-  accessibilityState = function() return M.axTrusted end,
+  accessibilityState = function(prompt)
+    if prompt then M.axPrompted = true end
+    return M.axTrusted
+  end,
   focus = function() M.front = M.apps.hammerspoon end,
   execute = function(cmd)
     M.executed[#M.executed + 1] = cmd

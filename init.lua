@@ -655,6 +655,15 @@ function obj:proofreadSelection()
   end)
 end
 
+--- Proofread:init()
+--- Method
+--- Called by hs.loadSpoon. Asks macOS for Accessibility access right away
+--- (needed to send Cmd-C and Cmd-V), so the first hotkey press just works.
+function obj:init()
+  if not hs.accessibilityState() then hs.accessibilityState(true) end
+  return self
+end
+
 --- Proofread:bindHotkeys(mapping)
 --- Method
 --- Binds the hotkey. Example:

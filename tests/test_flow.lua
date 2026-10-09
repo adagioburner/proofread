@@ -346,6 +346,16 @@ do
   check(M.pb.items["public.utf8-plain-text"] == "copied from another app", "their new clipboard isn't overwritten")
 end
 
+do
+  print("\n== asks for Accessibility when loaded ==")
+  M.reset(); M.axTrusted = false
+  local spoon = dofile(REPO .. "/init.lua"); spoon:init()
+  check(M.axPrompted, "init() shows the macOS permission prompt when access is missing")
+  M.reset()
+  spoon = dofile(REPO .. "/init.lua"); spoon:init()
+  check(not M.axPrompted, "no prompt when access is already granted")
+end
+
 print(("\n%d passed, %d failed"):format(passes, #failures))
 for _, f in ipairs(failures) do print("  FAILED: " .. f) end
 if #failures > 0 then error("tests failed") end

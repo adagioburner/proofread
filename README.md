@@ -13,7 +13,29 @@ It's a [Hammerspoon](https://www.hammerspoon.org) Spoon: a small plugin for the 
 3. **Review.** The panel compares your text with Claude's version word by word and marks every difference. The list of changes comes from that comparison, not from what Claude says it changed, so nothing can slip in unmarked.
 4. **Insert.** Proofread switches back to your app and pastes the text with only the changes you accepted (it sends ⌘V). Then it puts your old clipboard back.
 
-## Setup
+## Quick install
+
+Open Terminal, paste this line and press Return:
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/adagioburner/proofread/main/install.sh)"
+```
+
+The installer:
+
+1. installs Hammerspoon, if it isn't there yet
+2. downloads Proofread (no git needed)
+3. asks for an Anthropic API key, checks that it works, and stores it in the Keychain
+4. sets up the ⌃⌥P hotkey and makes Hammerspoon start at login
+5. opens System Settings, where you switch on Hammerspoon under Privacy & Security → Accessibility
+
+Run the same line again later to update. Your own edits to the prompt are kept; the new default prompt is saved next to it as `prompt.default.md`.
+
+For someone else's Mac, consider creating a separate API key (for example "Proofread – second Mac"). It is billed to the same account, but you can see its usage separately and revoke it without affecting your own.
+
+## Setup by hand (for working on Proofread itself)
+
+This installs Proofread as a git checkout, so you can edit, commit and push from it. The quick installer leaves a git checkout alone.
 
 **1. Install Hammerspoon** from [hammerspoon.org](https://www.hammerspoon.org) or with `brew install --cask hammerspoon`. Open it, and when asked, give it Accessibility access (System Settings → Privacy & Security → Accessibility). Proofread needs this to send ⌘C and ⌘V.
 
@@ -101,11 +123,13 @@ Other settings: `maxTokens` (default 16000), `keychainService` (the Keychain ite
 
 ## Updating
 
+If you used the quick installer, run it again. With a git checkout:
+
 ```sh
 cd ~/.hammerspoon/Spoons/Proofread.spoon && git pull
 ```
 
-Then *Reload Config*. The clone is also your working copy: edit files there, reload, test, and commit and push from the same folder.
+Then type `hs.reload()` in the Hammerspoon Console. The clone is also your working copy: edit files there, reload, test, and commit and push from the same folder.
 
 ## Troubleshooting
 
@@ -130,4 +154,5 @@ Then *Reload Config*. The clone is also your working copy: edit files there, rel
 | `init.lua` | the Spoon: hotkey, clipboard, Claude API call, paste-back |
 | `panel.html` | the review panel: word diff, per-change accept/reject, prompt editor |
 | `prompt.md` | the instructions sent to Claude |
+| `install.sh` | the one-command installer |
 | `tests/` | tests: `lua tests/test_flow.lua` runs the Spoon against a simulated Hammerspoon (needs Lua 5.4, e.g. `brew install lua`); `python3 tests/panel_test.py` tests the panel in a headless browser (needs Python Playwright) |
